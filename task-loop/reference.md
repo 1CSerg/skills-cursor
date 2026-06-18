@@ -1,87 +1,60 @@
-# Справочник: task-loop
+# Reference: task-loop
 
-## Модели
+## Models
 
-### Допустимые slug
-
-| Slug | Display name |
-|------|--------------|
+| Slug | Display |
+|------|---------|
 | `composer-2.5-fast` | Composer (default) |
 | `gemini-3.1-pro` | Gemini 3.1 Pro |
 | `gpt-5.3-codex` | GPT-5.3 Codex |
 | `gpt-5.5-medium` | GPT-5.5 Medium |
 | `kimi-k2.5` | Kimi K2.5 |
 
-Если пользователь запросил модель вне списка — сообщить о недоступности и использовать `composer-2.5-fast`.
+Unknown model → warn user, use Composer.
 
-### Алиасы в сообщении пользователя
-
-Оркестратор нормализует (регистронезависимо):
-
-| Алиас | Slug |
+| Alias | Slug |
 |-------|------|
-| `composer`, `composer-2.5`, `composer-2.5-fast` | `composer-2.5-fast` |
-| `gemini`, `gemini-3.1`, `gemini-3.1-pro` | `gemini-3.1-pro` |
-| `codex`, `gpt-5.3`, `gpt-5.3-codex` | `gpt-5.3-codex` |
-| `gpt-5.5`, `gpt-5.5-medium`, `medium` | `gpt-5.5-medium` |
-| `kimi`, `kimi-k2.5` | `kimi-k2.5` |
+| `composer`, `composer-2.5` | `composer-2.5-fast` |
+| `gemini`, `gemini-3.1` | `gemini-3.1-pro` |
+| `codex`, `gpt-5.3` | `gpt-5.3-codex` |
+| `gpt-5.5`, `medium` | `gpt-5.5-medium` |
+| `kimi` | `kimi-k2.5` |
 
-Синтаксис:
+`plan: gemini`, `dev: codex`, `review: gemini` — or explicit `*_model` slugs. Default: all Composer.
 
-- `plan: gemini` → `plan_model: gemini-3.1-pro`
-- `dev: codex` → `dev_model: gpt-5.3-codex`
-- `review: gemini` → `review_model: gemini-3.1-pro`
-- `plan_model: composer-2.5-fast, dev_model: codex, review_model: kimi` — явные slug
+---
 
-Не указано → все три `composer-2.5-fast`.
+## Subagent common
+
+All templates below assume:
+
+```text
+Task: generalPurpose, run_in_background: false
+Exploration: Prefer MCP semantic_search over broad grep; query, limit (no top_k).
+```
+
+Placeholder (only when search is available): `<semantic_search: on | on (indexing) | omit>`
 
 ---
 
 ## Semantic search context
 
-### Шаг 0: вызов `index_status`
+`CallMcpTool` → `index_status` (server: semantic-search-zvec-go, args: `{}`). Read schema from MCP file system.
 
-Оркестратор вызывает MCP **до всех остальных шагов**:
+| available | Condition |
+|-----------|-----------|
+| true | success and (`zvec_open_ok` **or** `indexing.running` **or** `zvec_doc_count > 0`) |
+| false | MCP/error/stub/empty index while idle |
 
-```
-CallMcpTool:
-  server: <имя сервера semantic-search-zvec-go в проекте, см. .cursor/mcp.json или MCP file system>
-  toolName: index_status
-  arguments: {}
-```
-
-Сначала прочитать схему `index_status.json` в MCP file system.
-
-### Критерии доступности
-
-| `available` | Условие |
-|-------------|---------|
-| `true` | Вызов успешен и индекс пригоден для поиска: `zvec_open_ok: true` **или** `indexing.running: true` **или** `zvec_doc_count > 0` |
-| `false` | MCP не подключён, tool error, `zvec_open_ok: false` при idle и пустом индексе, stub-сборка без поиска |
-
-**Индексация в процессе** (`indexing.running: true`) → `available: true`.
-
-### Строка для промптов субагентов
-
-Одна строка, **только если** `available: true`. Иначе — не вставлять.
-
-| Состояние | Строка |
-|-----------|--------|
-| Доступен, idle | `semantic_search: on` |
-| Доступен, индексация | `semantic_search: on (indexing)` |
-| Недоступен | omit |
-
-Правило для шаблонов Plan / Execute / Review / Fix (одна фраза в Instructions):
-
-```text
-Prefer MCP semantic_search over broad grep; params: query, limit (no top_k).
-```
+| State | Prompt line |
+|-------|-------------|
+| idle | `semantic_search: on` |
+| indexing | `semantic_search: on (indexing)` |
+| false | omit |
 
 ---
 
-## Формат вердикта
-
-Review-агент **обязан** завершить ответ этими блоками (оркестратор парсит их):
+## Verdict format
 
 ```markdown
 ## Verdict
@@ -94,225 +67,132 @@ none
 none
 ```
 
-При находках:
+FAIL (single-error example):
 
 ```markdown
 ## Verdict
 FAIL
 
 ## Errors
-
-1. [severity: critical] Описание проблемы
-   - Location: path/to/file.go:42
-   - Evidence: что наблюдено (тест упал, логика неверна, …)
-   - Fix: конкретное действие для dev-агента
-
-2. [severity: major] …
+1. [severity: critical] Description
+   - Location: path/file.go:42
+   - Evidence: test failed / incorrect logic
+   - Fix: concrete action
 
 ## Fix plan
-
-1. Сначала исправить … (файл X)
-2. Затем добавить тест …
-3. Прогнать `go test ./...`
+1. Fix … 2. Run go test ./...
 ```
 
-Правила:
-
-- `severity`: `critical` | `major` | `minor`
-- При `PASS`: `Errors` = `none` или пустой список
-- `Fix plan` — упорядоченные шаги только при `FAIL`
+`severity`: critical | major | minor.
 
 ---
 
-## Формат плана
-
-Plan-агент **обязан** завершить ответ блоком `## Execution plan`:
+## Execution plan format
 
 ```markdown
 ## Execution plan
-
 ### Approach
-Краткий подход (2–4 предложения).
-
 ### Prerequisites
-- что проверить / прочитать перед правками (или none)
-
 ### Steps
-1. Конкретное действие (файл, функция, тест)
-2. …
-
 ### Files
-- path/to/file — что изменить
-
 ### Tests
-- команды для проверки после выполнения
-
 ### Risks
-- edge cases и ограничения (или none)
 ```
 
-Оркестратор передаёт весь блок `## Execution plan` в промпт Execute (шаг 4).
+Orchestrator passes the full block to Execute (step 4).
 
 ---
 
 ## Plan
 
-Шаблон промпта для шага 3 (`plan_model`, `readonly: true`):
+Step 3, `plan_model`, readonly:
 
 ```text
-Full Repository Path: <absolute path to repo root>
+Full Repository Path: <abs path>
 Mode: implement
 Original Task:
-<дословный текст задачи от пользователя>
+<verbatim>
 
-<semantic_search: on | on (indexing) — если доступен; иначе omit>
+<semantic_search: on | on (indexing) | omit>
 
 Instructions:
-You are the planning agent (read-only). Design how to fulfill the Original Task.
-
-- Explore the repository as needed. Prefer MCP semantic_search over broad grep; params: query, limit (no top_k).
-- Do NOT modify files or commit.
-- Minimize scope; follow existing conventions.
-- Produce an actionable plan for the dev agent to execute in one pass.
-
-End with the mandatory Execution plan format:
-
-## Execution plan
-### Approach
-### Prerequisites
-### Steps
-(numbered, specific)
-### Files
-### Tests
-### Risks
+Planning agent (read-only). Fulfill Original Task. Subagent common applies.
+Do NOT modify files or commit. Minimize scope.
+End with ## Execution plan (see Execution plan format).
 ```
 
 ---
 
 ## Execute
 
-Шаблон промпта для шага 4 (`dev_model`, `readonly: false`):
+Step 4, `dev_model`:
 
 ```text
-Full Repository Path: <absolute path to repo root>
+Full Repository Path: <abs path>
 Mode: implement
 Original Task:
-<дословный текст задачи от пользователя>
+<verbatim>
 
-Execution plan (follow this):
-<вставить полный блок ## Execution plan из шага 3>
+Execution plan:
+<## Execution plan from step 3>
 
-<semantic_search: on | on (indexing) — если доступен; иначе omit>
+<semantic_search: on | on (indexing) | omit>
 
 Instructions:
-- Execute the Original Task by following the Execution plan step by step.
-- Prefer MCP semantic_search over broad grep; params: query, limit (no top_k).
-- Follow existing code conventions and minimize scope.
-- Do NOT run a review pass or commit changes.
-- Deviate from the plan only if a step is blocked — explain in the report.
-- Run applicable tests/linters from the plan (and repo standards).
-- Return a structured report:
-
-## Execution report
-### Done
-- bullet list of what was implemented
-
-### Files changed
-- path/to/file (brief note)
-
-### Plan deviations
-- none | what differed from the plan and why
-
-### Blockers
-- none | description of anything unfinished
+Follow Execution plan. Subagent common applies. No review, no commit.
+Report: ## Execution report / Done / Files changed / Plan deviations / Blockers
 ```
 
 ---
 
 ## Review
 
-Шаблон промпта для шага 5 (`review_model`, `readonly: true`):
+Step 5, `review_model`, readonly:
 
 ```text
-Full Repository Path: <absolute path to repo root>
+Full Repository Path: <abs path>
 Mode: <implement|review>
 Original Task:
-<дословный текст задачи>
+<verbatim>
 
 Review iteration: <N> of 5
 
-<semantic_search: on | on (indexing) — если доступен; иначе omit>
+<semantic_search: on | on (indexing) | omit>
 
 Instructions:
-You are the review agent (read-only). Evaluate work against the Original Task.
-- Prefer MCP semantic_search over broad grep; params: query, limit (no top_k).
-
-Check ALL of:
-1. Task completion — are all requirements from Original Task met?
-2. Code quality — bugs, regressions, conventions, edge cases.
-3. Tests and linter — discover and run applicable repo commands
-   (e.g. go test ./..., make test, go vet ./..., npm test).
-   Failures count as errors.
-
-Compare against:
-- For mode=implement: changes made to fulfill the task (git diff, recent edits).
-- For mode=review: the scope described in Original Task (branch changes,
-  uncommitted changes, or paths named in the task).
-
-Do NOT modify files. End with the mandatory Verdict format (see below).
-
-## Verdict
-PASS | FAIL
-
-## Errors
-(none or numbered list with severity, Location, Evidence, Fix)
-
-## Fix plan
-(none or ordered steps)
+Review agent (read-only). Subagent common applies.
+Check: task done, code quality, tests/linter (failures = errors).
+Scope: implement → git diff; review → scope from task.
+Do NOT modify files. End with Verdict (see Verdict format).
 ```
 
 ---
 
 ## Fix
 
-Шаблон промпта для шага 6 (`dev_model`, `readonly: false`):
+Step 6, `dev_model`:
 
 ```text
-Full Repository Path: <absolute path to repo root>
+Full Repository Path: <abs path>
 Mode: <implement|review>
 Original Task:
-<дословный текст задачи>
+<verbatim>
 
-Review findings to fix:
+Review findings:
+<## Errors + ## Fix plan from step 5>
 
-<вставить полные блоки ## Errors и ## Fix plan из шага 5>
-
-<semantic_search: on | on (indexing) — если доступен; иначе omit>
+<semantic_search: on | on (indexing) | omit>
 
 Instructions:
-- Fix ONLY the listed errors, in the order of Fix plan.
-- Prefer MCP semantic_search over broad grep; params: query, limit (no top_k).
-- Do NOT expand scope beyond the review findings.
-- Do NOT commit changes.
-- Run applicable tests/linters to verify fixes.
-- Return:
-
-## Fix report
-### Fixed
-- bullet per resolved error
-
-### Files changed
-- path (what changed)
-
-### Remaining issues
-- none | anything you could not fix
+Fix ONLY listed errors, Fix plan order. Subagent common applies. No commit.
+Report: ## Fix report / Fixed / Files changed / Remaining issues
 ```
 
 ---
 
-## Коммиты: HEREDOC
+## Commits: HEREDOC
 
-**Обязательно:** subject и body — на **русском языке**. Описание отражает **зачем**, не перечень файлов.
+Subject + body — **Russian only**. Describe **why**, not a file list.
 
 ### Bash
 
@@ -320,7 +200,7 @@ Instructions:
 git commit -m "$(cat <<'EOF'
 снимок: подготовка к выполнению задачи
 
-Краткое описание изменений.
+<описание>
 EOF
 )"
 ```
@@ -331,22 +211,18 @@ EOF
 git commit -m @'
 снимок: подготовка к выполнению задачи
 
-Краткое описание изменений.
+<описание>
 '@
 ```
 
-Финальный коммит — тот же формат и язык (русский); subject отражает выполненную задачу.
-
-### Примеры subject
-
-| Шаг | Пример |
-|-----|--------|
-| Снимок (шаг 2) | `снимок: подготовка к выполнению задачи` |
-| Финал, implement | `Добавить валидацию email в форму регистрации` |
-| Финал, review+фиксы | `Исправления по результатам ревью: утечка в coordinator` |
+| Step | Example subject (Russian) |
+|------|---------------------------|
+| Snapshot | `снимок: подготовка к выполнению задачи` |
+| Final implement | `Добавить валидацию email в форму` |
+| Final review+fixes | `Исправления по ревью: утечка в coordinator` |
 
 ---
 
-## Опциональная эскалация: Bugbot
+## Bugbot (optional)
 
-Если после 2+ итераций остаются `critical` findings по одной области — оркестратор может предложить пользователю `/review-bugbot` для второго мнения. Не заменяет шаг 5.
+2+ critical findings in one area → suggest `/review-bugbot`. Does not replace step 5.

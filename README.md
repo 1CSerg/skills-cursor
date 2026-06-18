@@ -56,9 +56,9 @@ git pull
 
 | Скилл | Описание |
 |-------|----------|
-| [task-loop](task-loop/SKILL.md) | Цикл задачи: index_status → снимок → план → выполнение → ревью → фикс → коммит |
+| [task-loop](task-loop/SKILL.md) | Task loop: index_status → snapshot → plan → execute → review → fix → commit |
 
-Вызов: `/task-loop <задача>` или attach скилла к сообщению.
+Invoke: `/task-loop <task>` or attach the skill to your message.
 
 ## Добавление нового скилла
 
