@@ -4,16 +4,17 @@ description: >-
   Runs tasks in a plan-execute-review-fix loop via subagents with configurable
   models (default Composer): MCP index_status first, snapshot commit, readonly
   plan, dev execution, readonly review, fix cycles until PASS, final commit.
-  Passes semantic search availability to subagents. Skips plan and execution
-  for review-only tasks. Use when the user invokes /task-loop or task loop.
+  Passes semantic search availability to subagents. Skips snapshot commit, plan,
+  and execution for review-only tasks. Use when the user invokes /task-loop or
+  task loop.
 disable-model-invocation: true
 ---
 
 # Iterative task execution
 
-The orchestrator **only coordinates** subagents — it does not write code or review; it commits only on steps 2 and 8.
+The orchestrator **only coordinates** subagents — it does not write code or review.
 
-Invoking this skill = permission for the initial and final commit. **Commit messages must be in Russian** (subject + body).
+**Commits:** step 2 (snapshot) — **`implement` only**; step 8 (final) — after PASS in either mode. Invoking this skill = permission for those commits. **Never snapshot-commit in `review` mode.** Commit messages must be in Russian (subject + body).
 
 Templates, MCP, HEREDOC: [reference.md](reference.md).
 
@@ -33,7 +34,9 @@ The orchestrator does not call `semantic_search`. Insert `semantic_search: …` 
 ## Step 1. Input
 
 - **Original Task** — verbatim into all subagents.
-- **mode**: `implement` (default) | `review` — auto from keywords («ревью», «review», «code review», …) or explicit `mode: review` / `mode: implement`.
+- **mode**: `implement` (default) | `review`
+  - **`review`** when the user asks to review (keywords: «ревью», «review», «code review», «проверь», «провести ревью», …) or `mode: review`. **No step 2** — do not commit uncommitted changes before work.
+  - **`implement`** — explicit `mode: implement` or task requires code changes.
 - **Models**: `plan_model`, `dev_model`, `review_model` — default Composer; slugs and aliases — [reference.md](reference.md#models).
 
 ```
@@ -63,7 +66,9 @@ Common: `subagent_type: generalPurpose`, `run_in_background: false`. **Retry: ma
 
 ## Step 2. Snapshot commit (`implement` only)
 
-Skip in `review`. `git status` + `git diff` + `git log -3`; no changes → step 3.
+**Never run in `review` mode** — even if there are uncommitted changes. Go straight to step 5.
+
+`implement` only: `git status` + `git diff` + `git log -3`; no changes → step 3.
 
 Otherwise: stage (no secrets), commit in Russian — [reference.md](reference.md#commits). Hook fail → no amend, new commit or STOP.
 
@@ -81,15 +86,22 @@ First step in `review`; in `implement` — after 4 and after each 6.
 
 Task per table. Criteria: task complete, code quality, tests/linter.
 
-Parse `## Verdict` / `## Errors` / `## Fix plan` — [reference.md](reference.md#verdict-format):
+Parse `## Verdict` / `## Errors` / `## Fix plan` — [reference.md](reference.md#verdict-format).
+
+**Orchestrator rule (strict):** step 8 **only** when **both** are true:
+1. `## Verdict` is `PASS` (not «conditional pass», «pass with notes», etc.)
+2. `## Errors` is exactly `none` or empty — **any** listed item (critical / major / minor / info) → step 6
 
 | Condition | → |
 |-----------|---|
-| PASS or empty Errors | step 8 |
-| FAIL + Errors | step 6 |
+| Verdict `PASS` **and** Errors `none`/empty | step 8 |
+| Verdict `FAIL`, or Errors has any item | step 6 |
+| Verdict `PASS` but Errors not `none` | **step 6** (reviewer must not mix PASS + open errors) |
 | Unrecognized format | FAIL; retry review with format reminder |
 
-**Cycle 5 ↔ 6:** until PASS, max 5 iterations (count step 5 runs). Limit reached → STOP without final commit. No commits between iterations.
+Review agent: open findings → `## Errors` + Verdict `FAIL`. Observations that need no fix → `## Notes` (orchestrator ignores for step 6/8).
+
+**Cycle 5 ↔ 6:** until strict PASS, max 5 iterations (count step 5 runs). Limit reached → STOP without final commit. No commits between iterations.
 
 ## Step 6. Fix
 
@@ -114,6 +126,7 @@ Only after PASS. No changes → skip. Otherwise: stage, Russian message (why, no
 
 ## Safeguards
 
+- **Review mode**: never step 2 (no pre-work snapshot commit), even with dirty tree.
 - Semantic search: step 0 required; when `on` — [Subagent common](reference.md#subagent-common).
 - Commits, secrets, hooks, models, retry, fix scope — as above.
 - Bugbot (optional): 2+ critical in one area → suggest `/review-bugbot`.

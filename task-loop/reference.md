@@ -56,6 +56,8 @@ Placeholder (only when search is available): `<semantic_search: on | on (indexin
 
 ## Verdict format
 
+**Strict PASS** — orchestrator proceeds to step 8 only with this shape:
+
 ```markdown
 ## Verdict
 PASS
@@ -67,7 +69,7 @@ none
 none
 ```
 
-FAIL (single-error example):
+**FAIL** — any open finding (all severities block step 8):
 
 ```markdown
 ## Verdict
@@ -78,12 +80,17 @@ FAIL
    - Location: path/file.go:42
    - Evidence: test failed / incorrect logic
    - Fix: concrete action
+2. [severity: minor] …
 
 ## Fix plan
 1. Fix … 2. Run go test ./...
 ```
 
-`severity`: critical | major | minor.
+`severity`: critical | major | minor | info.
+
+**Do not** write Verdict `PASS` while `## Errors` lists items — use `## Notes` for non-actionable observations (runtime E2E not run in review env, future ideas). If something should be fixed before merge, it belongs in `## Errors` with Verdict `FAIL`.
+
+Orchestrator: if Verdict says PASS but Errors ≠ `none` → treat as FAIL → step 6.
 
 ---
 
@@ -163,7 +170,8 @@ Instructions:
 Review agent (read-only). Subagent common applies.
 Check: task done, code quality, tests/linter (failures = errors).
 Scope: implement → git diff; review → scope from task.
-Do NOT modify files. End with Verdict (see Verdict format).
+Every fixable finding → ## Errors + Verdict FAIL. Non-actionable context → ## Notes only.
+Do NOT modify files. End with Verdict (see Verdict format). Strict PASS requires Errors: none.
 ```
 
 ---
