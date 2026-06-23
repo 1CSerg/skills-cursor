@@ -11,6 +11,9 @@ Cursor/
 ├── task-loop/
 │   ├── SKILL.md
 │   └── reference.md
+├── ci-fix-loop/
+│   ├── SKILL.md
+│   └── reference.md
 └── README.md
 ```
 
@@ -56,9 +59,10 @@ git pull
 
 | Скилл | Описание |
 |-------|----------|
-| [task-loop](task-loop/SKILL.md) | Task loop: index_status → snapshot → plan → execute → review → fix → commit |
+| [task-loop](task-loop/SKILL.md) | Итеративное выполнение задач: index_status → снимок → план → реализация → ревью → исправления → коммит |
+| [ci-fix-loop](ci-fix-loop/SKILL.md) | Цикл починки CI: план → исправление → локальная проверка → push → ожидание GitHub checks (до 20 итераций) |
 
-Invoke: `/task-loop <task>` or attach the skill to your message.
+**Вызов:** `/task-loop <задача>` · `/ci-fix-loop` — или прикрепите скилл к сообщению.
 
 ## Добавление нового скилла
 
