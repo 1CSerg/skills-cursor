@@ -143,6 +143,8 @@ Original Task:
 Execution plan:
 <## Execution plan from step 3>
 
+Dev cycle: 1
+
 <semantic_search: on | on (indexing) | omit>
 
 Instructions:
@@ -188,6 +190,8 @@ Original Task:
 
 Review findings:
 <## Errors + ## Fix plan from step 5>
+
+Dev cycle: <N>
 
 <semantic_search: on | on (indexing) | omit>
 

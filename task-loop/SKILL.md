@@ -25,6 +25,22 @@ Templates, MCP, HEREDOC: [reference.md](reference.md).
 2. `implement`: 2 → 3 → 4 → 5 ↔ 6 → 8 → 9
 3. `review`: skip 2–4 → 5 ↔ 6 → 8 → 9
 
+## Iteration counters
+
+Initialize at orchestration start: `dev_cycles = 0`, `review_cycles = 0`.
+
+| Counter | When +1 | In report |
+|---------|---------|-----------|
+| `dev_cycles` | step 4 or step 6 completes | yes — Step 9 |
+| `review_cycles` | step 5 completes | no — limit only |
+
+`dev_cycles` = primary execute (0 or 1) + post-review fixes (0..N).
+
+Rules:
+- increment **after** the subagent step completes successfully (not on retry);
+- retry (max 1) does not increment again if the step was not counted as complete;
+- on STOP at review limit — report accumulated `dev_cycles` in step 9.
+
 ## Step 0. `index_status`
 
 Before all steps: `CallMcpTool` → `index_status` (server semantic-search-zvec-go). Criteria and markers — [reference.md](reference.md#semantic-search-context).
@@ -46,7 +62,7 @@ Task Progress:
 - [ ] 2 snapshot / skip
 - [ ] 3 plan / skip
 - [ ] 4 execute / skip
-- [ ] 5–6 review/fix (N/5)
+- [ ] 5–6 review/fix (review: N/5, dev_cycles: M)
 - [ ] 8 final commit
 - [ ] 9 report
 ```
@@ -80,9 +96,13 @@ Task per table. Save `## Execution plan` → pass verbatim to step 4. Readonly; 
 
 Task per table. Follow the plan; report deviations. Save report for step 9.
 
+Pass `Dev cycle: 1` to the Execute prompt. After Execute completes → `dev_cycles += 1`.
+
 ## Step 5. Review
 
 First step in `review`; in `implement` — after 4 and after each 6.
+
+At launch → pass `<N> = review_cycles + 1` to the Review prompt. After Review completes → `review_cycles += 1`.
 
 Task per table. Criteria: task complete, code quality, tests/linter.
 
@@ -101,11 +121,13 @@ Parse `## Verdict` / `## Errors` / `## Fix plan` — [reference.md](reference.md
 
 Review agent: open findings → `## Errors` + Verdict `FAIL`. Observations that need no fix → `## Notes` (orchestrator ignores for step 6/8).
 
-**Cycle 5 ↔ 6:** until strict PASS, max 5 iterations (count step 5 runs). Limit reached → STOP without final commit. No commits between iterations.
+**Cycle 5 ↔ 6:** until strict PASS, max 10 **review** cycles (`review_cycles`, step 5 runs). Limit reached → STOP without final commit. No commits between iterations.
 
 ## Step 6. Fix
 
 Only on FAIL. Task per table. Fix listed errors only; do not commit. → step 5 (not 3–4).
+
+At launch → pass `Dev cycle: <N>` where `<N> = dev_cycles + 1`. After Fix completes → `dev_cycles += 1`.
 
 ## Step 8. Final commit
 
@@ -119,7 +141,7 @@ Only after PASS. No changes → skip. Otherwise: stage, Russian message (why, no
 | Semantic search | on / on (indexing) / off |
 | Mode, models | … |
 | Snapshot, plan | hash / skip / n/a |
-| Iterations 5↔6 | N |
+| dev_cycles | `N` (execute + fixes) |
 | Outcome | PASS / STOP |
 | Final commit | hash / skip |
 | Files | from subagent reports |
